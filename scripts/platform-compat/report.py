@@ -51,6 +51,7 @@ def write_report(directory: Path, row: dict[str, str]) -> None:
         "scenario_id": SCENARIO,
         "observed_coverage": "user-bootstrap",
         "model_mode": "strict",
+        "cleanup": "pass" if row["outcome"] == "pass" else "unverified",
         **row,
     }
     (directory / "results.json").write_text(

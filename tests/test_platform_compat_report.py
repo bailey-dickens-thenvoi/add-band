@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -33,6 +34,8 @@ def test_report_maps_verdict_without_copying_raw_messages(
     row = report.verdict(raw, code)
     report.write_report(tmp_path, row)
     assert row["outcome"] == expected
+    saved = json.loads((tmp_path / "results.json").read_text())["scenarios"][0]
+    assert saved["cleanup"] == ("pass" if expected == "pass" else "unverified")
     for file in ("results.json", "junit.xml"):
         text = (tmp_path / file).read_text()
         assert "secret-in-error" not in text and "sensitive-body" not in text
