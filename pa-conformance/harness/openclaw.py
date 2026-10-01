@@ -206,6 +206,9 @@ class OpenClawHarness(Harness):
             "agents.defaults.model.primary",
             f"anthropic/{self.ctx.anthropic_model}",
         )
+        # Bootstrap restarts the gateway: model routing must already be in place.
+        self._route_model_through_standin()
+        self.up_standin()
         result = self.stack.run(
             "gateway", "-c", _PUBLISHED_BOOTSTRAP.read_text(),
             entrypoint="bash",
@@ -223,10 +226,6 @@ class OpenClawHarness(Harness):
             f"{self.stack.scrub(result.stdout[-800:])}"
         )
         self._account_id = registered.group(1)
-        # Route this instance's model calls through the stand-in the same way
-        # up() does — the env var alone is ignored by the built-in catalog.
-        self._route_model_through_standin()
-        self.up_standin()
         self.stack.up("gateway")
         wait_for(
             self._gateway_live,

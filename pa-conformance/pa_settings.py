@@ -71,6 +71,10 @@ class PASettings(BaseSettings):
     #: conformance state: Profile model_wire verdicts are untouched.
     pa_standin: bool = True
 
+    #: Container addresses can differ from the host-side driver endpoints.
+    band_container_rest_url: str = ""
+    band_container_ws_url: str = ""
+
     #: Prepared NanoClaw checkout (stacks/nanoclaw/prepare.sh). Unset falls
     #: back to the run's work root.
     nanoclaw_src: Path | None = None

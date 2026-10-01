@@ -572,13 +572,23 @@ class BootstrapOnboard(Protocol):
     def __call__(self, name: str) -> Awaitable[ProvisionedAgent]: ...
 
 
+@dataclass(frozen=True)
+class BootstrapSession:
+    agent: ProvisionedAgent
+    model: ModelStandIn | None
+
+
+class BootstrapFactory(Protocol):
+    def __call__(self, name: str) -> Awaitable[BootstrapSession]: ...
+
+
 @pytest.fixture
-async def bootstrap_onboard(
+async def bootstrap_session(
     settings: BaselineSettings,
     resources: ResourceManager,
     run_id: str,
     tmp_path: Path,
-) -> AsyncGenerator[BootstrapOnboard, None]:
+) -> AsyncGenerator[BootstrapFactory, None]:
     """F4 onboarding factory: a FRESH harness instance (own compose project,
     derived run id — never the session-shared `pas` one, whose identity is
     injected) onboarded via the catalog's published bootstrap, which mints its
@@ -587,8 +597,8 @@ async def bootstrap_onboard(
     """
     ctx = HarnessContext(
         run_id=f"{run_id}f4",
-        band_base_url=settings.endpoints.rest_url,
-        band_ws_url=settings.endpoints.ws_url,
+        band_base_url=pa_settings().band_container_rest_url or settings.endpoints.rest_url,
+        band_ws_url=pa_settings().band_container_ws_url or settings.endpoints.ws_url,
         work_root=tmp_path,
         anthropic_model=settings.llm_models.anthropic_model,
         llm_env=_llm_env(settings),
@@ -596,26 +606,46 @@ async def bootstrap_onboard(
     started: list[Harness] = []
     minted: list[str] = []
 
-    async def _onboard(name: str) -> ProvisionedAgent:
+    async def _onboard(name: str) -> BootstrapSession:
         harness = HARNESSES[name](ctx)
         started.append(harness)
-        agent_name = f"e2e-band-{run_id}-f4-{name}"
+        agent_name = f"e2e-band-{run_id}-f4"
         agent_id = await asyncio.to_thread(
             harness.onboard_via_bootstrap,
             user_api_key=settings.credentials.api_key_user,
             agent_name=agent_name,
         )
         minted.append(agent_id)
-        return ProvisionedAgent(id=agent_id, api_key="", name=agent_name)
+        model = None
+        if harness.standin_control_token is not None:
+            model = ModelStandIn(
+                port=await asyncio.to_thread(harness.standin_control_port),
+                control_token=harness.standin_control_token,
+                deadline_s=float(settings.e2e_timeout),
+            )
+        return BootstrapSession(
+            agent=ProvisionedAgent(id=agent_id, api_key="", name=agent_name), model=model,
+        )
 
     try:
         yield _onboard
     finally:
-        await _teardown_bootstrap(started, minted, resources)
+        await _teardown_bootstrap(
+            started, minted, resources,
+            strict=pa_settings().pa_test_lane is TestLane.INTEGRATION,
+        )
+
+
+@pytest.fixture
+def bootstrap_onboard(bootstrap_session: BootstrapFactory) -> BootstrapOnboard:
+    async def onboard(name: str) -> ProvisionedAgent:
+        return (await bootstrap_session(name)).agent
+    return onboard
 
 
 async def _teardown_bootstrap(
-    started: list[Harness], minted: list[str], resources: ResourceManager
+    started: list[Harness], minted: list[str], resources: ResourceManager,
+    *, strict: bool = False,
 ) -> None:
     """Best-effort cleanup for F4's dedicated harnesses and minted agents.
 
@@ -638,6 +668,10 @@ async def _teardown_bootstrap(
     for harness, result in zip(started, stack_cleanup):
         if isinstance(result, Exception):
             _log_cleanup_failure("teardown", harness.name, result)
+    if strict and any(
+        isinstance(result, Exception) for result in [*agent_cleanup, *stack_cleanup]
+    ):
+        raise RuntimeError("Bootstrap cleanup failed")
 
 
 async def _bring_up(
@@ -750,6 +784,8 @@ async def _agent_handle(agent: ProvisionedAgent, settings: BaselineSettings) -> 
 
 
 def _llm_env(settings: BaselineSettings) -> dict[str, str]:
+    if pa_settings().pa_model_mode is ModelMode.STRICT:
+        return {"ANTHROPIC_API_KEY": "pa-strict-dummy-not-a-provider-key"}
     env = {
         "ANTHROPIC_API_KEY": settings.llm_credentials.anthropic_api_key,
         "OPENAI_API_KEY": settings.llm_credentials.openai_api_key,

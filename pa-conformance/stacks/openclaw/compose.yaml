@@ -12,6 +12,8 @@
 #     `compose exec gateway node dist/index.js …`.
 services:
   gateway:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     image: ${OPENCLAW_IMAGE:-docker.io/openclaw/openclaw:2026.6.11}
     # Loopback, not the upstream compose's `lan`: the gateway refuses to bind
     # non-loopback without an auth token, and this run never reaches it from
